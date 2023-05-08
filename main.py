@@ -1,5 +1,9 @@
+from requests.auth import HTTPBasicAuth
 import requests
 import json
+
+auth = HTTPBasicAuth('swu63@yahoo.com', 'c4b4bc81607a4693932e736441f6b0d2')
+usableRoutes = ('0', '1')
 
 
 # Return all routes using the MBTA `/routes` endpoint
@@ -10,26 +14,39 @@ import json
 # '3'	Bus
 # '4'	Ferry
 # Ex: Passing types ('0', '1') returns all routes of type "light rail" and "heavy rail"
-def getRoutes(*types):
-    if not types:
-        return requests.get('https://api-v3.mbta.com/routes')
-    typesConcat = ','.join(types)
-    routesPayload = requests.get(f'https://api-v3.mbta.com/routes?filter[type]={typesConcat}')
-    return json.loads(routesPayload.text).get('data')
+def getRoutes(stopId=None, types=usableRoutes):
+    queryParams = {}
+    if types:
+        typesConcat = ','.join(types)
+        queryParams['filter[type]'] = typesConcat
+    if stopId:
+        queryParams['filter[stop]'] = stopId
+    stopsPayload = requests.get(f'https://api-v3.mbta.com/routes', params=queryParams, auth=auth)
+    return json.loads(stopsPayload.text).get('data')
+
 
 # Return all stops for a route with the given ID
 def getRouteStops(routeId):
-    stopsPayload = requests.get(f'https://api-v3.mbta.com/stops?filter%5Broute%5D={routeId}')
+    stopsPayload = requests.get(f'https://api-v3.mbta.com/stops?filter[route]={routeId}', auth=auth)
     return json.loads(stopsPayload.text).get('data')
+
+
+def getCompletedPath(origin, destination, stops, routes):
+    if origin == destination:
+        return [origin]
+    routeToDestination = stops.get(destination)
+    stopToRoute = routes.get(routeToDestination)
+    return getCompletedPath(origin, stopToRoute, stops, routes) + [routeToDestination, destination]
 
 
 def main():
     # Problem 1
-    routes = getRoutes('0', '1')
-    routeNamesLong: list = list(map(lambda r: r.get('attributes').get('long_name'), routes))
+    routes = getRoutes()
+    routeNamesLong = list(map(lambda r: r.get('attributes').get('long_name'), routes))
     print(f'Here are the long names of all subway routes: {", ".join(routeNamesLong)}')
 
     # Problem 2
+    # (Route Name, Number of Stops)
     maxStops = (None, None)
     minStops = (None, None)
     stopIntersections = {}
@@ -45,13 +62,13 @@ def main():
         if minStops[1] is None or numStops < minStops[1]:
             minStops = (routeName, numStops)
 
-        # Find and count the number of routes that each stop intersects
+        # Find and count each route that a stop intersects
         for s in routeStops:
-            stopName = s.get('attributes').get('name')
-            if stopName not in stopIntersections:
-                stopIntersections[stopName] = [routeName]
+            stopId = s.get('id')
+            if stopId not in stopIntersections:
+                stopIntersections[stopId] = [routeId]
             else:
-                stopIntersections[stopName].append(routeName)
+                stopIntersections[stopId].append(routeId)
     print(f'The route with the most stops is the {maxStops[0]} with {maxStops[1]} stops.')
     print(f'The route with the least stops is the {minStops[0]} with {minStops[1]} stops.')
     for stop, intersections in stopIntersections.items():
@@ -62,6 +79,37 @@ def main():
     origin = input(f'Please enter your origin stop ID: ')
     destination = input(f'Please enter your destination stop ID: ')
 
+    stopQueue = [origin]
+    allReachableStops = {origin: None}  # Map of Stop -> Route taken to reach it
+    allReachableRoutes = {}  # Map of Route -> Stop taken to reach it
+    pathToDestination = None
+    while pathToDestination is None:
+        # If there is no path to the destination, the queue of intersection stops will run out
+        # without ever finding a valid path
+        if len(stopQueue) == 0:
+            print('Destination not reachable from given origin')
+            return
+        currentStop = stopQueue.pop(0)
+        # Get routes that are reachable from the current stop, any new routes should be explored
+        # to see if they can reach the destination or other intersection stops
+        currentlyReachableRoutes = stopIntersections.get(currentStop)
+        for route in currentlyReachableRoutes:
+            # Guarantees that we find the shortest number of line changes required to reach each line
+            if route not in allReachableRoutes:
+                allReachableRoutes[route] = currentStop
+            stopsOnRoute = list(map(lambda r: r.get('id'), getRouteStops(route)))
+            # If destination is reachable from current route, we can construct the complete path from
+            # origin -> destination
+            if destination in stopsOnRoute:
+                allReachableStops[destination] = route
+                pathToDestination = getCompletedPath(origin, destination, allReachableStops, allReachableRoutes)
+            # To continue searching, we consider only stops that are intersections and have not already been reached
+            newIntersections = list(
+                filter((lambda s: len(stopIntersections.get(s)) >= 2 and s not in allReachableStops), stopsOnRoute))
+            for stop in newIntersections:
+                allReachableStops[stop] = route
+            stopQueue.extend(newIntersections)
+    print(' -> '.join(pathToDestination))
 
 
 if __name__ == '__main__':
