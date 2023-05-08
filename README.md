@@ -11,3 +11,7 @@ This exercise can be run in Python3 with the following command in the root direc
 `python3 main.py`
 
 It will then complete the first two problems unprompted, and then ask the user for two inputs designating the origin and destination stations for Problem 3.
+
+The tests for this exercise can be run in Python3 with the following command in the root directory of the repo:
+
+`python3 tests.py`
